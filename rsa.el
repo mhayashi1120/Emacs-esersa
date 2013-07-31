@@ -1,7 +1,7 @@
 ;;; rsa.el --- Encrypt/Decrypt string with RSA key.
 
 ;; Author: Masahiro Hayashi <mhayashi1120@gmail.com>
-;; Keywords: data
+;; Keywords: data play
 ;; URL: http://github.com/mhayashi1120/Emacs-cipher/raw/master/rsa.el
 ;; Emacs: GNU Emacs 22 or later
 ;; Version: 0.0.2
