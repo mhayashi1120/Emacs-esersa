@@ -78,6 +78,249 @@
           (const oaep)))
 
 ;;;
+;;; C oriented list manipulation
+;;;
+
+(defun rsa--listset (list idx value)
+  (setcar (nthcdr idx list) value))
+
+;; like memcpy
+(defun rsa--listcpy (to from)
+  (loop for x in from
+        for i from 0
+        do (rsa--listset to i x)))
+
+;; like `memset'
+(defun rsa--vecset (to start byte count)
+  (loop for i from start
+        repeat count
+        do (aset to i byte)))
+
+;;;
+;;; Handling byte stream
+;;;
+
+(if (fboundp 'unibyte-string)
+    (defalias 'rsa--unibytes 'unibyte-string)
+  (defun rsa--unibytes (&rest bytes)
+    (string-as-unibyte (concat bytes))))
+
+;;TODO remove?
+(defun rsa--read-bytes (bytes pos len)
+  (loop with res = (aref bytes pos)
+        with max-len = (length bytes)
+        for i from (1+ pos) below (min (+ pos len) max-len)
+        do (setq res (rsa-bn:logior
+                      (rsa-bn:lshift res 8)
+                      (aref bytes i)))
+        finally return (cons res (if (= i max-len) nil i))))
+
+
+;;;
+;;; handling bignum
+;;;
+
+(defun rsa-bn:from-bytes (text)
+  (let ((hex (mapconcat (lambda (x) (format "%02x" x)) text "")))
+    (rsa-bn:from-string hex 16)))
+
+(defun rsa-bn:from-string (s &optional base)
+  (let* ((str (format "%s#%s" (or base "16") s))
+         (bn (math-read-number str)))
+    bn))
+
+(defun rsa-bn:to-text (bn)
+  (loop for (d . r) = (rsa-bn:div&rem bn 256)
+        then (rsa-bn:div&rem d 256)
+        collect r into res
+        until (rsa-bn:zerop d)
+        finally return (apply 'rsa--unibytes (nreverse res))))
+
+(defun rsa-bn:to-bytes (bn)
+  (let ((text (rsa-bn:to-text bn)))
+    (append text nil)))
+
+(defun rsa-bn:to-number (bn)
+  (let* ((calc-number-radix 10)
+         (dec (math-format-number bn)))
+    (string-to-number dec)))
+
+(defun rsa-bn:to-decimal (bn)
+  (let ((calc-number-radix 10))
+    (math-format-number bn)))
+
+(defun rsa-bn:zerop (bn)
+  (Math-zerop bn))
+
+(defun rsa-bn:1- (bn)
+  (rsa-bn:- bn 1))
+
+(defun rsa-bn:1+ (bn)
+  (rsa-bn:+ bn 1))
+
+(defun rsa-bn:random-prime (bit)
+  (loop with prime = nil
+        until prime
+        do (let ((r (rsa-bn:random bit)))
+             (when (rsa-bn-prime-p r)
+               (setq prime r)))
+        finally return prime))
+
+(defun rsa-bn-prime-p (bn)
+  (with-temp-buffer
+    (call-process "openssl"
+                  nil (current-buffer) nil "prime"
+                  (rsa-bn:to-decimal bn))
+    (goto-char (point-min))
+    (looking-at "[0-9a-zA-Z]+ is prime")))
+
+(declare-function math-random-digits "calc-comb")
+
+(defun rsa-bn:random (bit)
+  (require 'calc-comb)
+  (math-random-digits
+   (ceiling (* bit (log10 2)))))
+
+(defun rsa-bn:diff (bn1 bn2)
+  (if (rsa-bn:> bn1 bn2)
+      (rsa-bn:- bn1 bn2)
+    (rsa-bn:- bn2 bn1)))
+
+(defun rsa-bn:+ (bn1 bn2)
+  (math-add bn1 bn2))
+
+(defun rsa-bn:- (bn1 bn2)
+  (math-sub bn1 bn2))
+
+(defun rsa-bn:* (bn1 bn2)
+  (math-mul bn1 bn2))
+
+(defun rsa-bn:div&rem (dividend divisor)
+  (math-idivmod dividend divisor))
+
+(defun rsa-bn:% (dividend divisor)
+  (destructuring-bind (_ . mod) (rsa-bn:div&rem dividend divisor)
+    mod))
+
+(defun rsa-bn:/ (dividend divisor)
+  (destructuring-bind (div . _) (rsa-bn:div&rem dividend divisor)
+    div))
+
+(defun rsa-bn:sqrt (bn)
+  (math-sqrt bn))
+
+(defun rsa-bn:lcm (bn1 bn2)
+  (let* ((gcd (math-gcd bn1 bn2))
+         (div (rsa-bn:/ bn1 gcd)))
+    (rsa-bn:* div bn2)))
+
+(defun rsa-bn:= (bn1 bn2)
+  (= (math-compare bn1 bn2) 0))
+
+(defun rsa-bn:< (bn1 bn2)
+  (< (math-compare bn1 bn2) 0))
+
+(defun rsa-bn:> (bn1 bn2)
+  (> (math-compare bn1 bn2) 0))
+
+(defun rsa-bn:logior (bn1 bn2)
+  (let* ((b1 (if (numberp bn1) (list bn1) (cdr bn1)))
+         (b2 (if (numberp bn2) (list bn2) (cdr bn2)))
+         (n (math-or-bignum b1 b2)))
+    (cons 'bigpos n)))
+
+(defun rsa-bn:logand (bn1 bn2)
+  (let* ((b1 (if (numberp bn1) (list bn1) (cdr bn1)))
+         (b2 (if (numberp bn2) (list bn2) (cdr bn2)))
+         (n (math-and-bignum b1 b2)))
+    (if n
+        (cons 'bigpos n)
+      0)))
+
+(defun rsa-bn:read-bytes (bytes count &optional little-endian)
+  (let* ((data (loop for b in bytes
+                     repeat count
+                     collect b into res
+                     finally return
+                     (progn
+                       (when (< (length res) count)
+                         (error "Unable read %s byte(s) from %s" count bytes))
+                       res)))
+         (value (rsa-bn:from-bytes data))
+         (rest (nthcdr count bytes)))
+    (list value rest)))
+
+(defun rsa-bn:read-int32 (bytes &optional little-endian)
+  (rsa-bn:read-bytes bytes 4 little-endian))
+
+(defun rsa-bn:serialize (bn byte)
+  (let* ((unibytes (rsa-bn:to-text bn))
+         (0pad (make-list (- byte (length unibytes)) 0)))
+    (apply 'rsa--unibytes (append 0pad unibytes nil))))
+
+(defun rsa-bn:lshift (bn count)
+  (if (minusp count)
+      (rsa-bn:rshift bn (- count))
+    (rsa-bn:* bn (math-pow 2 count))))
+
+(defun rsa-bn:rshift (bn count)
+  (if (minusp count)
+      (rsa-bn:lshift bn (- count))
+    (car (rsa-bn:div&rem bn (math-pow 2 count)))))
+
+(defun rsa-bn:modulo-product (modulo bn1 bn2)
+  (loop with pow = 1
+        for b2 = bn2
+        then (rsa-bn:rshift b2 1)
+        for base = bn1
+        then (rsa-bn:% (rsa-bn:* base base) modulo)
+        until (rsa-bn:zerop b2)
+        do (progn
+             (unless (rsa-bn:zerop (rsa-bn:logand 1 b2))
+               (setq pow (rsa-bn:% (rsa-bn:* pow base) modulo))))
+        finally return pow))
+
+;;;
+;;; Arithmetic calculation
+;;;
+
+(defun rsa-euclid (bn1 bn2)
+  (if (rsa-bn:> bn1 bn2)
+      (rsa-euclid-0 bn1 bn2)
+    (rsa-euclid-0 bn2 bn1)))
+
+;; http://en.wikipedia.org/wiki/Extended_Euclidean_algorithm
+(defun rsa-euclid-0 (bn1 bn2)
+  (loop with a = bn1
+        with b = bn2
+        with x = 0
+        with y = 1
+        with x-1 = 1
+        with y-1 = 0
+        with tmp
+        until (rsa-bn:zerop b)
+        do (let* ((q&r (rsa-bn:div&rem a b))
+                  (q (car q&r))
+                  (r (cdr q&r)))
+             (setq a b)
+             (setq b r)
+             (setq tmp x)
+             (setq x (rsa-bn:+ x-1 (rsa-bn:* q x)))
+             (setq x-1 tmp)
+             (setq tmp y)
+             (setq y (rsa-bn:+ y-1 (rsa-bn:* q y)))
+             (setq y-1 tmp))
+        finally return
+        (let ((tmp-x (rsa-bn:* bn1 x-1))
+              (tmp-y (rsa-bn:* bn2 y-1)))
+          (if (rsa-bn:< tmp-x tmp-y)
+              (cons x-1 y-1)
+            ;; make y coefficient to plus value
+            (cons (rsa-bn:diff bn2 x-1)
+                  (rsa-bn:diff bn1 y-1))))))
+
+
+;;;
 ;;; inner functions
 ;;;
 
@@ -94,13 +337,6 @@
 (defun rsa--check-unibyte-string (s)
   (when (multibyte-string-p s)
     (error "Not a unibyte string `%s'" s)))
-
-(defun rsa--bn-to-text (bn)
-  (loop for (d . r) = (rsa-bn:div&rem bn 256)
-        then (rsa-bn:div&rem d 256)
-        collect r into res
-        until (rsa-bn:zerop d)
-        finally return (apply 'rsa--unibytes (nreverse res))))
 
 (defun rsa--hex-to-bytes (hex)
   (loop with len = (length hex)
@@ -689,239 +925,6 @@
          (hexes (loop for i from 0 below (length hash) by 2
                       collect (substring hash i (+ i 2)))))
     (mapconcat (lambda (x) x) hexes ":")))
-
-;;;
-;;; Arithmetic calculation
-;;;
-
-(defun rsa-euclid (bn1 bn2)
-  (if (rsa-bn:> bn1 bn2)
-      (rsa-euclid-0 bn1 bn2)
-    (rsa-euclid-0 bn2 bn1)))
-
-;; http://en.wikipedia.org/wiki/Extended_Euclidean_algorithm
-(defun rsa-euclid-0 (bn1 bn2)
-  (loop with a = bn1
-        with b = bn2
-        with x = 0
-        with y = 1
-        with x-1 = 1
-        with y-1 = 0
-        with tmp
-        until (rsa-bn:zerop b)
-        do (let* ((q&r (rsa-bn:div&rem a b))
-                  (q (car q&r))
-                  (r (cdr q&r)))
-             (setq a b)
-             (setq b r)
-             (setq tmp x)
-             (setq x (rsa-bn:+ x-1 (rsa-bn:* q x)))
-             (setq x-1 tmp)
-             (setq tmp y)
-             (setq y (rsa-bn:+ y-1 (rsa-bn:* q y)))
-             (setq y-1 tmp))
-        finally return
-        (let ((tmp-x (rsa-bn:* bn1 x-1))
-              (tmp-y (rsa-bn:* bn2 y-1)))
-          (if (rsa-bn:< tmp-x tmp-y)
-              (cons x-1 y-1)
-            ;; make y coefficient to plus value
-            (cons (rsa-bn:diff bn2 x-1)
-                  (rsa-bn:diff bn1 y-1))))))
-
-(if (fboundp 'unibyte-string)
-    (defalias 'rsa--unibytes 'unibyte-string)
-  (defun rsa--unibytes (&rest bytes)
-    (string-as-unibyte (concat bytes))))
-
-(defun rsa--read-bytes (bytes pos len)
-  (loop with res = (aref bytes pos)
-        with max-len = (length bytes)
-        for i from (1+ pos) below (min (+ pos len) max-len)
-        do (setq res (rsa-bn:logior
-                      (rsa-bn:lshift res 8)
-                      (aref bytes i)))
-        finally return (cons res (if (= i max-len) nil i))))
-
-
-
-;;;
-;;; C oriented list manipulation
-;;;
-
-(defun rsa--listset (list idx value)
-  (setcar (nthcdr idx list) value))
-
-;; like memcpy
-(defun rsa--listcpy (to from)
-  (loop for x in from
-        for i from 0
-        do (rsa--listset to i x)))
-
-;; like `memset'
-(defun rsa--vecset (to start byte count)
-  (loop for i from start
-        repeat count
-        do (aset to i byte)))
-
-
-
-;;;
-;;; handling bignum
-;;;
-
-(defun rsa-bn:from-bytes (text)
-  (let ((hex (mapconcat (lambda (x) (format "%02x" x)) text "")))
-    (rsa-bn:from-string hex 16)))
-
-(defun rsa-bn:from-string (s &optional base)
-  (let* ((str (format "%s#%s" (or base "16") s))
-         (bn (math-read-number str)))
-    bn))
-
-(defun rsa-bn:to-bytes (bn)
-  (let ((text (rsa--bn-to-text bn)))
-    (append text nil)))
-
-(defun rsa-bn:to-number (bn)
-  (let* ((calc-number-radix 10)
-         (dec (math-format-number bn)))
-    (string-to-number dec)))
-
-(defun rsa-bn:to-decimal (bn)
-  (let ((calc-number-radix 10))
-    (math-format-number bn)))
-
-(defun rsa-bn:zerop (bn)
-  (Math-zerop bn))
-
-(defun rsa-bn:1- (bn)
-  (rsa-bn:- bn 1))
-
-(defun rsa-bn:1+ (bn)
-  (rsa-bn:+ bn 1))
-
-(defun rsa-bn:random-prime (bit)
-  (loop with prime = nil
-        until prime
-        do (let ((r (rsa-bn:random bit)))
-             (when (rsa-bn-prime-p r)
-               (setq prime r)))
-        finally return prime))
-
-(defun rsa-bn-prime-p (bn)
-  (with-temp-buffer
-    (call-process "openssl"
-                  nil (current-buffer) nil "prime"
-                  (rsa-bn:to-decimal bn))
-    (goto-char (point-min))
-    (looking-at "[0-9a-zA-Z]+ is prime")))
-
-(declare-function math-random-digits "calc-comb")
-
-(defun rsa-bn:random (bit)
-  (require 'calc-comb)
-  (math-random-digits
-   (ceiling (* bit (log10 2)))))
-
-(defun rsa-bn:diff (bn1 bn2)
-  (if (rsa-bn:> bn1 bn2)
-      (rsa-bn:- bn1 bn2)
-    (rsa-bn:- bn2 bn1)))
-
-(defun rsa-bn:+ (bn1 bn2)
-  (math-add bn1 bn2))
-
-(defun rsa-bn:- (bn1 bn2)
-  (math-sub bn1 bn2))
-
-(defun rsa-bn:* (bn1 bn2)
-  (math-mul bn1 bn2))
-
-(defun rsa-bn:div&rem (dividend divisor)
-  (math-idivmod dividend divisor))
-
-(defun rsa-bn:% (dividend divisor)
-  (destructuring-bind (_ . mod) (rsa-bn:div&rem dividend divisor)
-    mod))
-
-(defun rsa-bn:/ (dividend divisor)
-  (destructuring-bind (div . _) (rsa-bn:div&rem dividend divisor)
-    div))
-
-(defun rsa-bn:sqrt (bn)
-  (math-sqrt bn))
-
-(defun rsa-bn:lcm (bn1 bn2)
-  (let* ((gcd (math-gcd bn1 bn2))
-         (div (rsa-bn:/ bn1 gcd)))
-    (rsa-bn:* div bn2)))
-
-(defun rsa-bn:= (bn1 bn2)
-  (= (math-compare bn1 bn2) 0))
-
-(defun rsa-bn:< (bn1 bn2)
-  (< (math-compare bn1 bn2) 0))
-
-(defun rsa-bn:> (bn1 bn2)
-  (> (math-compare bn1 bn2) 0))
-
-(defun rsa-bn:logior (bn1 bn2)
-  (let* ((b1 (if (numberp bn1) (list bn1) (cdr bn1)))
-         (b2 (if (numberp bn2) (list bn2) (cdr bn2)))
-         (n (math-or-bignum b1 b2)))
-    (cons 'bigpos n)))
-
-(defun rsa-bn:logand (bn1 bn2)
-  (let* ((b1 (if (numberp bn1) (list bn1) (cdr bn1)))
-         (b2 (if (numberp bn2) (list bn2) (cdr bn2)))
-         (n (math-and-bignum b1 b2)))
-    (if n
-        (cons 'bigpos n)
-      0)))
-
-(defun rsa-bn:read-bytes (bytes count &optional little-endian)
-  (let* ((data (loop for b in bytes
-                     repeat count
-                     collect b into res
-                     finally return
-                     (progn
-                       (when (< (length res) count)
-                         (error "Unable read %s byte(s) from %s" count bytes))
-                       res)))
-         (value (rsa-bn:from-bytes data))
-         (rest (nthcdr count bytes)))
-    (list value rest)))
-
-(defun rsa-bn:read-int32 (bytes &optional little-endian)
-  (rsa-bn:read-bytes bytes 4 little-endian))
-
-(defun rsa-bn:serialize (bn byte)
-  (let* ((unibytes (rsa--bn-to-text bn))
-         (0pad (make-list (- byte (length unibytes)) 0)))
-    (apply 'rsa--unibytes (append 0pad unibytes nil))))
-
-(defun rsa-bn:lshift (bn count)
-  (if (minusp count)
-      (rsa-bn:rshift bn (- count))
-    (rsa-bn:* bn (math-pow 2 count))))
-
-(defun rsa-bn:rshift (bn count)
-  (if (minusp count)
-      (rsa-bn:lshift bn (- count))
-    (car (rsa-bn:div&rem bn (math-pow 2 count)))))
-
-(defun rsa-bn:modulo-product (modulo bn1 bn2)
-  (loop with pow = 1
-        for b2 = bn2
-        then (rsa-bn:rshift b2 1)
-        for base = bn1
-        then (rsa-bn:% (rsa-bn:* base base) modulo)
-        until (rsa-bn:zerop b2)
-        do (progn
-             (unless (rsa-bn:zerop (rsa-bn:logand 1 b2))
-               (setq pow (rsa-bn:% (rsa-bn:* pow base) modulo))))
-        finally return pow))
 
 ;;;
 ;;; Interfaces
