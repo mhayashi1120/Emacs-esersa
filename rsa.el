@@ -78,61 +78,6 @@
           (const oaep)))
 
 ;;;
-;;; Interfaces
-;;;
-
-;;;###autoload
-(defun rsa-encrypt-string (his-public-key string &optional coding-system)
-  "Encrypt a well encoded STRING with HIS-PUBLIC-KEY to encrypted object
-which can be decrypted by `rsa-decrypt-string'."
-  (let* ((cs (or coding-system default-terminal-coding-system))
-         (M (encode-coding-string string cs)))
-    (rsa--encode-bytes M his-public-key nil)))
-
-;;;###autoload
-(defun rsa-decrypt-string (my-private-key encrypted-string &optional coding-system)
-  "Decrypt a ENCRYPTED-STRING with MY-PRIVATE-KEY which was encrypted
-by `rsa-encrypt-string'"
-  (let ((M (rsa--decode-bytes encrypted-string my-private-key nil))
-        (cs (or coding-system default-terminal-coding-system)))
-    (decode-coding-string M cs)))
-
-;;;###autoload
-(defun rsa-encrypt-bytes (his-public-key string)
-  "Encrypt a well encoded STRING with HIS-PUBLIC-KEY to encrypted object
-which can be decrypted by `rsa-decrypt-string'."
-  (rsa--check-unibyte-string string)
-  (rsa--encode-bytes string his-public-key nil))
-
-;;;###autoload
-(defun rsa-decrypt-bytes (my-private-key encrypted-string)
-  "Decrypt a ENCRYPTED-STRING with MY-PRIVATE-KEY which was encrypted
-by `rsa-encrypt-bytes'"
-  (rsa--check-unibyte-string encrypted-string)
-  (rsa--decode-bytes encrypted-string my-private-key nil))
-
-;;;###autoload
-(defun rsa-sign-hash (my-private-key digest)
-  "Sign DIGEST with MY-PRIVATE-KEY.
-Returned value will be verified by `rsa-verify-hash'
-with MY-PUBLIC-KEY. "
-  (rsa--check-unibyte-string digest)
-  (let* ((M digest)
-         (sign (rsa--encode-bytes M my-private-key t)))
-    sign))
-
-;;;###autoload
-(defun rsa-verify-hash (his-public-key sign digest)
-  "Verify SIGN which created by `rsa-sign-hash' with private-key.
-Decrypted unibyte string must equal DIGEST otherwise raise error.
-"
-  (rsa--check-unibyte-string digest)
-  (let* ((verify (rsa--decode-bytes sign his-public-key t)))
-    (unless (equal verify digest)
-      (error "Sign must be `%s' but `%s'" digest verify))
-    t))
-
-;;;
 ;;; inner functions
 ;;;
 
@@ -575,11 +520,12 @@ Decrypted unibyte string must equal DIGEST otherwise raise error.
        nil))))
 
 (defconst rsa--re-openssh-publine
-  (concat
-   "\\`"
-   "ssh-rsa "
-   "\\([a-zA-Z0-9+/]+=*\\)"
-   "\\(?: \\(.*\\)\\)?"))
+  (eval-when-compile
+    (concat
+     "\\`"
+     "ssh-rsa "
+     "\\([a-zA-Z0-9+/]+=*\\)"
+     "\\(?: \\(.*\\)\\)?")))
 
 (defun rsa-openssh-load-publine (pub-line)
   (unless (string-match rsa--re-openssh-publine pub-line)
@@ -976,6 +922,61 @@ Decrypted unibyte string must equal DIGEST otherwise raise error.
              (unless (rsa-bn:zerop (rsa-bn:logand 1 b2))
                (setq pow (rsa-bn:% (rsa-bn:* pow base) modulo))))
         finally return pow))
+
+;;;
+;;; Interfaces
+;;;
+
+;;;###autoload
+(defun rsa-encrypt-string (his-public-key string &optional coding-system)
+  "Encrypt a well encoded STRING with HIS-PUBLIC-KEY to encrypted object
+which can be decrypted by `rsa-decrypt-string'."
+  (let* ((cs (or coding-system default-terminal-coding-system))
+         (M (encode-coding-string string cs)))
+    (rsa--encode-bytes M his-public-key nil)))
+
+;;;###autoload
+(defun rsa-decrypt-string (my-private-key encrypted-string &optional coding-system)
+  "Decrypt a ENCRYPTED-STRING with MY-PRIVATE-KEY which was encrypted
+by `rsa-encrypt-string'"
+  (let ((M (rsa--decode-bytes encrypted-string my-private-key nil))
+        (cs (or coding-system default-terminal-coding-system)))
+    (decode-coding-string M cs)))
+
+;;;###autoload
+(defun rsa-encrypt-bytes (his-public-key string)
+  "Encrypt a well encoded STRING with HIS-PUBLIC-KEY to encrypted object
+which can be decrypted by `rsa-decrypt-string'."
+  (rsa--check-unibyte-string string)
+  (rsa--encode-bytes string his-public-key nil))
+
+;;;###autoload
+(defun rsa-decrypt-bytes (my-private-key encrypted-string)
+  "Decrypt a ENCRYPTED-STRING with MY-PRIVATE-KEY which was encrypted
+by `rsa-encrypt-bytes'"
+  (rsa--check-unibyte-string encrypted-string)
+  (rsa--decode-bytes encrypted-string my-private-key nil))
+
+;;;###autoload
+(defun rsa-sign-hash (my-private-key digest)
+  "Sign DIGEST with MY-PRIVATE-KEY.
+Returned value will be verified by `rsa-verify-hash'
+with MY-PUBLIC-KEY. "
+  (rsa--check-unibyte-string digest)
+  (let* ((M digest)
+         (sign (rsa--encode-bytes M my-private-key t)))
+    sign))
+
+;;;###autoload
+(defun rsa-verify-hash (his-public-key sign digest)
+  "Verify SIGN which created by `rsa-sign-hash' with private-key.
+Decrypted unibyte string must equal DIGEST otherwise raise error.
+"
+  (rsa--check-unibyte-string digest)
+  (let* ((verify (rsa--decode-bytes sign his-public-key t)))
+    (unless (equal verify digest)
+      (error "Sign must be `%s' but `%s'" digest verify))
+    t))
 
 
 
