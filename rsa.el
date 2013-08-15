@@ -2,7 +2,7 @@
 
 ;; Author: Masahiro Hayashi <mhayashi1120@gmail.com>
 ;; Keywords: data
-;; URL: http://github.com/mhayashi1120/Emacs-cipher/raw/master/rsa.el
+;; URL: https://github.com/mhayashi1120/Emacs-rsa/raw/master/rsa.el
 ;; Emacs: GNU Emacs 22 or later
 ;; Version: 0.0.2
 ;; Package-Requires: ()
@@ -24,7 +24,7 @@
 
 ;;; Install:
 
-;; Put this file into load-path'ed with "cipher" directory, and
+;; Put this file into load-path'ed directory, and
 ;; !!!!!!!!!!!!!!! BYTE COMPILE IT !!!!!!!!!!!!!!!
 ;; And put the following expression into your .emacs.
 ;;
@@ -84,7 +84,7 @@
 (defun rsa--listset (list idx value)
   (setcar (nthcdr idx list) value))
 
-;; like memcpy
+;; like `memcpy'
 (defun rsa--listcpy (to from)
   (loop for x in from
         for i from 0
@@ -792,7 +792,7 @@
         (setq res (cons data res))))
     (nreverse res)))
 
-(declare-function cipher/aes-decrypt-by-key "aes")
+(declare-function kaesar-decrypt "kaesar")
 
 (defun rsa--openssh-decrypt-maybe (file)
   (save-excursion
@@ -832,8 +832,8 @@
           (cond
            (key
             (let ((encrypted (base64-decode-string b64)))
-              (require 'cipher/aes)
-              (setq data (cipher/aes-decrypt-by-key encrypted algorithm key iv))))
+              (require 'kaesar)
+              (setq data (kaesar-decrypt encrypted key algorithm iv))))
            (t
             (setq data (base64-decode-string b64))))
           (delete-region (point-min) (point-max))
