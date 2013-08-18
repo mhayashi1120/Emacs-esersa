@@ -335,6 +335,8 @@
      'error-message "Encoding error")
 
 (defun rsa--check-unibyte-string (s)
+  (unless (stringp s)
+    (error "Not a string `%s'" s))
   (when (multibyte-string-p s)
     (error "Not a unibyte string `%s'" s)))
 
@@ -833,7 +835,7 @@
            (key
             (let ((encrypted (base64-decode-string b64)))
               (require 'kaesar)
-              (setq data (kaesar-decrypt encrypted key algorithm iv))))
+              (setq data (kaesar-decrypt encrypted key iv algorithm))))
            (t
             (setq data (base64-decode-string b64))))
           (delete-region (point-min) (point-max))
