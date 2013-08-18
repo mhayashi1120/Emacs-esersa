@@ -77,7 +77,8 @@
                   (public-key (rsa-key:export-public key))
                   (M (rsa-test--random-string))
                   (hash (md5 M))
-                  (digest (rsa--hex-to-bytes hash))
+                  (digest-bytes (rsa--hex-to-bytes hash))
+                  (digest (apply 'rsa--unibytes digest-bytes))
                   (C (rsa-sign-hash key digest)))
              (rsa-verify-hash public-key C digest))))
 
@@ -85,36 +86,38 @@
   ""
   :tags '(rsa)
   (loop repeat rsa-test--repeat
-        do (let* ((keyfile (rsa-test--openssl-genrsa)) ;TODO generating key...
-                  (key (rsa-openssh-load-key keyfile))
-                  (M "hogehoge")
-                  (Ce (rsa-encrypt-bytes key M))
-                  (Co (rsa-test--openssl-encrypt keyfile M))
-                  (Me (rsa-decrypt-bytes key Co))
-                  (Mo (rsa-test--openssl-decrypt keyfile Ce)))
-             (should (equal M Me))
-             (should (equal M Mo))
-             (delete-file keyfile))))
+        do (let ((keyfile (rsa-test--openssl-genrsa))) ;TODO generating key...
+             (unwind-protect
+                 (let* ((key (rsa-openssh-load-key keyfile))
+                        (M "hogehoge")
+                        (Ce (rsa-encrypt-bytes key M))
+                        (Co (rsa-test--openssl-encrypt keyfile M))
+                        (Me (rsa-decrypt-bytes key Co))
+                        (Mo (rsa-test--openssl-decrypt keyfile Ce)))
+                   (should (equal M Me))
+                   (should (equal M Mo)))
+               (delete-file keyfile)))))
 
 (ert-deftest rsa-test--keyfile-loading ()
   ""
   :tags '(rsa)
   (loop repeat rsa-test--repeat
-        do (let ((keylen rsa-test--key-length)
-                 (secfile (make-temp-file "rsa-test-"))
+        do (let ((secfile (make-temp-file "rsa-test-"))
                  (pubfile (make-temp-file "rsa-test-")))
-             (shell-command-to-string (format "openssl genrsa %d > %s" keylen secfile))
-             (shell-command-to-string (format "openssl rsa -in %s -pubout > %s" secfile pubfile))
-             (let ((seckey (rsa-openssh-load-key secfile))
-                   (pubkey (rsa-openssh-load-pubkey pubfile)))
-               (should (equal (rsa-key:N seckey) (rsa-key:N pubkey)))
-               (should (equal (rsa-key:E seckey) (rsa-key:E pubkey)))
-               (let* ((M "a")
-                      (C (rsa-encrypt-bytes pubkey M))
-                      (M2 (rsa-decrypt-bytes seckey C)))
-                 (should (equal M M2))))
-             (delete-file secfile)
-             (delete-file pubfile))))
+             (unwind-protect
+                 (let ((keylen rsa-test--key-length))
+                   (shell-command-to-string (format "openssl genrsa %d > %s" keylen secfile))
+                   (shell-command-to-string (format "openssl rsa -in %s -pubout > %s" secfile pubfile))
+                   (let ((seckey (rsa-openssh-load-key secfile))
+                         (pubkey (rsa-openssh-load-pubkey pubfile)))
+                     (should (equal (rsa-key:N seckey) (rsa-key:N pubkey)))
+                     (should (equal (rsa-key:E seckey) (rsa-key:E pubkey)))
+                     (let* ((M "a")
+                            (C (rsa-encrypt-bytes pubkey M))
+                            (M2 (rsa-decrypt-bytes seckey C)))
+                       (should (equal M M2)))))
+               (delete-file secfile)
+               (delete-file pubfile)))))
 
 ;;TODO loop by padding method
 (ert-deftest rsa-test--padding ()
