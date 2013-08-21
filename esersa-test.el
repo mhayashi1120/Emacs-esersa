@@ -77,7 +77,8 @@
                   (public-key (esersa-key:export-public key))
                   (M (esersa-test--random-string))
                   (hash (md5 M))
-                  (digest (esersa--hex-to-bytes hash))
+                  (digest/bytes (esersa--hex-to-bytes hash))
+                  (digest (apply 'esersa--unibytes digest/bytes))
                   (C (esersa-sign-hash key digest)))
              (esersa-verify-hash public-key C digest))))
 
