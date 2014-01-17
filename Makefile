@@ -1,5 +1,8 @@
+EMACS = emacs
 
-check:
-	emacs -q -batch -eval "(byte-compile-file \"esersa.el\")"; \
-	emacs -q -batch -l esersa.el -l esersa-test.el \
-		-eval "(ert-run-tests-batch-and-exit '(tag esersa))";
+check: compile
+	$(EMACS) -q -batch -l esersa.elc -l esersa-test.el \
+		-f ert-run-tests-batch-and-exit
+
+compile:
+	$(EMACS) -q -batch -f batch-byte-compile esersa.el
