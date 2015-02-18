@@ -2,10 +2,10 @@
 
 ;; Author: Masahiro Hayashi <mhayashi1120@gmail.com>
 ;; Keywords: data
-;; URL: https://github.com/mhayashi1120/Emacs-rsa/raw/master/rsa.el
+;; URL: https://github.com/mhayashi1120/Emacs-esersa/raw/master/esersa.el
 ;; Emacs: GNU Emacs 22 or later
-;; Version: 0.0.2
-;; Package-Requires: ()
+;; Version: 0.0.3
+;; Package-Requires: ((cl-lib "0.3"))
 
 ;; This program is free software; you can redistribute it and/or
 ;; modify it under the terms of the GNU General Public License as
@@ -22,33 +22,40 @@
 ;; Free Software Foundation, Inc., 51 Franklin Street, Fifth Floor,
 ;; Boston, MA 02110-1301, USA.
 
-;;; Install:
+;;; Commentary:
+
+;; RSA for Emacs. But it is ___NOT___ useful for normal user.
+;; This package is just made for studying purpose.
+
+;; `ese` is Japanese word which means `pseudo` .
+
+;; This package have full compatibility of `openssl rsautl` command.
+
+;; ## Install:
 
 ;; Put this file into load-path'ed directory, and
-;; !!!!!!!!!!!!!!! BYTE COMPILE IT !!!!!!!!!!!!!!!
+;; ___!!!!!!!!!!!!!!! BYTE COMPILE IT !!!!!!!!!!!!!!!___
 ;; And put the following expression into your .emacs.
 ;;
 ;;     (require 'esersa)
 
-;;; Usage:
-
-;;; Sample:
+;; ## Usage:
 
 ;; * To encrypt our secret
 ;;   Please ensure that do not forget `clear-string' you want to hide.
 
 ;;TODO load public key from openssh
-;; (defvar our-secret nil)
+;;     (defvar our-secret nil)
 
-;; (let ((raw-string "Our Secret")
-;;       (key (esersa-openssh-load-publine public-key-in-authorized_keys-file)))
-;;   (setq our-secret (esersa-encrypt-string key raw-string))
-;;   (clear-string raw-string))
+;;     (let ((raw-string "Our Secret")
+;;           (key (esersa-openssh-load-publine public-key-in-authorized_keys-file)))
+;;       (setq our-secret (esersa-encrypt-string key raw-string))
+;;       (clear-string raw-string))
 
 ;; * To decrypt `our-secret'
 
 ;;TODO load private key from openssh
-;; (esersa-decrypt-string our-secret)
+;;     (esersa-decrypt-string our-secret)
 
 ;;; TODO:
 
@@ -58,16 +65,16 @@
 
 ;;; Code:
 
-(eval-when-compile
-  (require 'cl))
-
 (defgroup esersa nil
   "Encrypt/Decrypt, Sign/Verify string with rsa key"
   :group 'environment)
 
+(require 'cl-lib)
+
 (require 'calc)
 (require 'calc-ext)
 (require 'calc-bin)
+(require 'calc-math)
 
 (defcustom esersa-padding-method 'pkcs
   "Padding method to use."
@@ -86,15 +93,15 @@
 
 ;; like `memcpy'
 (defun esersa--listcpy (to from)
-  (loop for x in from
-        for i from 0
-        do (esersa--listset to i x)))
+  (cl-loop for x in from
+           for i from 0
+           do (esersa--listset to i x)))
 
 ;; like `memset'
 (defun esersa--vecset (to start byte count)
-  (loop for i from start
-        repeat count
-        do (aset to i byte)))
+  (cl-loop for i from start
+           repeat count
+           do (aset to i byte)))
 
 ;;;
 ;;; Handling byte stream
@@ -120,11 +127,11 @@
     bn))
 
 (defun esersa-bn:to-text (bn)
-  (loop for (d . r) = (esersa-bn:div&rem bn 256)
-        then (esersa-bn:div&rem d 256)
-        collect r into res
-        until (esersa-bn:zerop d)
-        finally return (apply 'esersa--unibytes (nreverse res))))
+  (cl-loop for (d . r) = (esersa-bn:div&rem bn 256)
+           then (esersa-bn:div&rem d 256)
+           collect r into res
+           until (esersa-bn:zerop d)
+           finally return (apply 'esersa--unibytes (nreverse res))))
 
 (defun esersa-bn:to-bytes (bn)
   (let ((text (esersa-bn:to-text bn)))
@@ -148,28 +155,26 @@
 (defun esersa-bn:1+ (bn)
   (esersa-bn:+ bn 1))
 
-(defun esersa-bn:random-prime (bit)
-  (loop with prime = nil
-        until prime
-        do (let ((r (esersa-bn:random bit)))
-             (when (esersa-bn-prime-p r)
-               (setq prime r)))
-        finally return prime))
+(defun esersa-bn:floor (bn)
+  (math-floor bn))
 
-(defun esersa-bn-prime-p (bn)
-  (with-temp-buffer
-    (call-process "openssl"
-                  nil (current-buffer) nil "prime"
-                  (esersa-bn:to-decimal bn))
-    (goto-char (point-min))
-    (looking-at "[0-9a-zA-Z]+ is prime")))
+(defun esersa-bn:random-prime (bit)
+  (cl-loop with prime = nil
+           until prime
+           do (let ((r (esersa-bn:random bit)))
+                (when (esersa-bn-prime-p r)
+                  (setq prime r)))
+           finally return prime))
 
 (declare-function math-random-digits "calc-comb")
+
+(defun esersa-bn:integerp (bn)
+  (Math-integerp bn))
 
 (defun esersa-bn:random (bit)
   (require 'calc-comb)
   (math-random-digits
-   (ceiling (* bit (log10 2)))))
+   (ceiling (* bit (log 2 10)))))
 
 (defun esersa-bn:diff (bn1 bn2)
   (if (esersa-bn:> bn1 bn2)
@@ -189,15 +194,32 @@
   (math-idivmod dividend divisor))
 
 (defun esersa-bn:% (dividend divisor)
-  (destructuring-bind (_ . mod) (esersa-bn:div&rem dividend divisor)
+  (cl-destructuring-bind (_ . mod) (esersa-bn:div&rem dividend divisor)
     mod))
 
 (defun esersa-bn:/ (dividend divisor)
-  (destructuring-bind (div . _) (esersa-bn:div&rem dividend divisor)
+  (cl-destructuring-bind (div . _) (esersa-bn:div&rem dividend divisor)
     div))
+
+(defun esersa-bn:log (bn-x bn-base)
+  ;;TODO only return integer num
+  ;;TODO re-consider it
+  (cdr (math-integer-log bn-x bn-base)))
 
 (defun esersa-bn:sqrt (bn)
   (math-sqrt bn))
+
+(defun esersa-bn:pow (bn1 bn2)
+  (let ((calc-display-working-message nil))
+    ;;TODO math-ipow?
+    (math-pow bn1 bn2)))
+
+(defun esersa-bn:nth-root (bn1 bn2)
+  ;; only handle integer.
+  ;; `math-nth-root' may raise too many recursion error.
+  (let ((calc-display-working-message nil))
+    (let ((root (math-nth-root-integer bn1 bn2)))
+      (and (car root) (cdr root)))))
 
 (defun esersa-bn:lcm (bn1 bn2)
   (let* ((gcd (math-gcd bn1 bn2))
@@ -212,6 +234,14 @@
 
 (defun esersa-bn:> (bn1 bn2)
   (> (math-compare bn1 bn2) 0))
+
+(defun esersa-bn:<= (bn1 bn2)
+  (or (esersa-bn:< bn1 bn2)
+      (esersa-bn:= bn1 bn2)))
+
+(defun esersa-bn:>= (bn1 bn2)
+  (or (esersa-bn:> bn1 bn2)
+      (esersa-bn:= bn1 bn2)))
 
 (defun esersa-bn:logior (bn1 bn2)
   (let* ((b1 (if (numberp bn1) (list bn1) (cdr bn1)))
@@ -228,14 +258,14 @@
       0)))
 
 (defun esersa-bn:read-bytes (bytes count &optional little-endian)
-  (let* ((data (loop for b in bytes
-                     repeat count
-                     collect b into res
-                     finally return
-                     (progn
-                       (when (< (length res) count)
-                         (error "Unable read %s byte(s) from %s" count bytes))
-                       res)))
+  (let* ((data (cl-loop for b in bytes
+                        repeat count
+                        collect b into res
+                        finally return
+                        (progn
+                          (when (< (length res) count)
+                            (error "Unable read %s byte(s) from %s" count bytes))
+                          res)))
          (value (esersa-bn:from-bytes data))
          (rest (nthcdr count bytes)))
     (list value rest)))
@@ -249,26 +279,68 @@
     (apply 'esersa--unibytes (append 0pad unibytes nil))))
 
 (defun esersa-bn:lshift (bn count)
-  (if (minusp count)
+  (if (cl-minusp count)
       (esersa-bn:rshift bn (- count))
     (esersa-bn:* bn (math-pow 2 count))))
 
 (defun esersa-bn:rshift (bn count)
-  (if (minusp count)
+  (if (cl-minusp count)
       (esersa-bn:lshift bn (- count))
     (car (esersa-bn:div&rem bn (math-pow 2 count)))))
 
 (defun esersa-bn:modulo-product (modulo bn1 bn2)
-  (loop with pow = 1
-        for b2 = bn2
-        then (esersa-bn:rshift b2 1)
-        for base = bn1
-        then (esersa-bn:% (esersa-bn:* base base) modulo)
-        until (esersa-bn:zerop b2)
-        do (progn
-             (unless (esersa-bn:zerop (esersa-bn:logand 1 b2))
-               (setq pow (esersa-bn:% (esersa-bn:* pow base) modulo))))
-        finally return pow))
+  (cl-loop with pow = 1
+           for b2 = bn2
+           then (esersa-bn:rshift b2 1)
+           for base = bn1
+           then (esersa-bn:% (esersa-bn:* base base) modulo)
+           until (esersa-bn:zerop b2)
+           do (progn
+                (unless (esersa-bn:zerop (esersa-bn:logand 1 b2))
+                  (setq pow (esersa-bn:% (esersa-bn:* pow base) modulo))))
+           finally return pow))
+
+(defun esersa-bn:perfect-power-p (bn)
+  (cond
+   ((esersa-bn:<= bn 2) nil)
+   ((esersa-bn:zerop (esersa-bn:logand bn (esersa-bn:1- bn)))
+    ;; Most significant bit is on return t (perfect power of 2)
+    ;; bin: 100000000 => t 11000000 => nil
+    ;;TODO return value
+    (cons 2 (esersa-bn:log bn 2)))
+   (t
+    (cl-loop with n = 2
+             with tmp
+             ;; perfect power of 2 is exclude by above condition.
+             ;; 3^n is the smallest integer rest of X^n
+             ;; TODO: consider to use `math-nth-root-integer' directly
+             ;;     its cdr value is 2 then can return
+             while (esersa-bn:>= bn (esersa-bn:pow 3 n))
+             if (progn
+                  (setq tmp (esersa-bn:nth-root bn n))
+                  (and tmp (esersa-bn:integerp tmp)))
+             return (cons tmp n)
+             do (setq n (esersa-bn:1+ n))
+             finally return nil))))
+
+;; (cl-loop for x in '(4 8 9 16 25)
+;;       do (should (esersa-bn:perfect-power-p x)))
+
+;; (cl-loop for x in '(0 1 2 3 15 17)
+;;       do (should-not (esersa-bn:perfect-power-p x)))
+
+;;TODO
+(defun esersa-bn-prime-p (bn)
+  (cond
+   ((esersa-bn:perfect-power-p bn)
+    nil)
+   (t
+    (with-temp-buffer
+      (call-process "openssl"
+                    nil (current-buffer) nil "prime"
+                    (esersa-bn:to-decimal bn))
+      (goto-char (point-min))
+      (looking-at "[0-9a-zA-Z]+ is prime")))))
 
 ;;;
 ;;; Arithmetic calculation
@@ -281,33 +353,33 @@
 
 ;; http://en.wikipedia.org/wiki/Extended_Euclidean_algorithm
 (defun esersa-euclid-0 (bn1 bn2)
-  (loop with a = bn1
-        with b = bn2
-        with x = 0
-        with y = 1
-        with x-1 = 1
-        with y-1 = 0
-        with tmp
-        until (esersa-bn:zerop b)
-        do (let* ((q&r (esersa-bn:div&rem a b))
-                  (q (car q&r))
-                  (r (cdr q&r)))
-             (setq a b)
-             (setq b r)
-             (setq tmp x)
-             (setq x (esersa-bn:+ x-1 (esersa-bn:* q x)))
-             (setq x-1 tmp)
-             (setq tmp y)
-             (setq y (esersa-bn:+ y-1 (esersa-bn:* q y)))
-             (setq y-1 tmp))
-        finally return
-        (let ((tmp-x (esersa-bn:* bn1 x-1))
-              (tmp-y (esersa-bn:* bn2 y-1)))
-          (if (esersa-bn:< tmp-x tmp-y)
-              (cons x-1 y-1)
-            ;; make y coefficient to plus value
-            (cons (esersa-bn:diff bn2 x-1)
-                  (esersa-bn:diff bn1 y-1))))))
+  (cl-loop with a = bn1
+           with b = bn2
+           with x = 0
+           with y = 1
+           with x-1 = 1
+           with y-1 = 0
+           with tmp
+           until (esersa-bn:zerop b)
+           do (let* ((q&r (esersa-bn:div&rem a b))
+                     (q (car q&r))
+                     (r (cdr q&r)))
+                (setq a b)
+                (setq b r)
+                (setq tmp x)
+                (setq x (esersa-bn:+ x-1 (esersa-bn:* q x)))
+                (setq x-1 tmp)
+                (setq tmp y)
+                (setq y (esersa-bn:+ y-1 (esersa-bn:* q y)))
+                (setq y-1 tmp))
+           finally return
+           (let ((tmp-x (esersa-bn:* bn1 x-1))
+                 (tmp-y (esersa-bn:* bn2 y-1)))
+             (if (esersa-bn:< tmp-x tmp-y)
+                 (cons x-1 y-1)
+               ;; make y coefficient to plus value
+               (cons (esersa-bn:diff bn2 x-1)
+                     (esersa-bn:diff bn1 y-1))))))
 
 
 ;;;
@@ -331,10 +403,10 @@
     (error "Not a unibyte string `%s'" s)))
 
 (defun esersa--hex-to-bytes (hex)
-  (loop with len = (length hex)
-        for i from 0 below len by 2
-        for j from (if (zerop (% len 2)) 2 1) by 2
-        collect (string-to-number (substring hex i j) 16)))
+  (cl-loop with len = (length hex)
+           for i from 0 below len by 2
+           for j from (if (zerop (% len 2)) 2 1) by 2
+           collect (string-to-number (substring hex i j) 16)))
 
 (defun esersa--encode-bytes (text key sign-p)
   (let* ((n (esersa-key:N key))
@@ -370,19 +442,19 @@
 ;;;
 
 (defun esersa--random-memset (vec start len)
-  (loop repeat len
-        for i from start
-        do (progn
-             (aset vec i (let (r)
-                           (while (zerop (setq r (random 256))))
-                           r)))
-        finally return i))
+  (cl-loop repeat len
+           for i from start
+           do (progn
+                (aset vec i (let (r)
+                              (while (zerop (setq r (random 256))))
+                              r)))
+           finally return i))
 
 (defun esersa--xor-masking (data mask)
-  (loop for m in mask
-        for d in data
-        for i from 0
-        collect (logxor d m)))
+  (cl-loop for m in mask
+           for d in data
+           for i from 0
+           collect (logxor d m)))
 
 (defun esersa--padding-sslv23-add (text size)
   (let ((len (length text))
@@ -400,10 +472,10 @@
       (aset vec 0 0)
       (aset vec 1 2)                    ; Public Key BT (Block Type)
       (setq i (esersa--random-memset vec 2 nulllen))
-      (loop repeat 8
-            do (progn
-                 (aset vec i 3)
-                 (setq i (1+ i))))
+      (cl-loop repeat 8
+               do (progn
+                    (aset vec i 3)
+                    (setq i (1+ i))))
       (aset vec i 0)
       vec)))
 
@@ -411,9 +483,9 @@
   (unless (= (aref text 0) 0)
     (signal 'esersa-encryption-failed
             (list "Expected null byte")))
-  (loop for i from 1 below (length text)
-        if (zerop (aref text i))
-        return (substring text (1+ i))))
+  (cl-loop for i from 1 below (length text)
+           if (zerop (aref text i))
+           return (substring text (1+ i))))
 
 (defun esersa--padding-pkcs-add-1 (block-type text size filler)
   (let ((len (length text))
@@ -451,16 +523,16 @@
   (unless (= (aref text 0) 0)
     (signal 'esersa-encryption-failed
             (list "Expected null byte")))
-  (loop for i from 1 below (length text)
-        if (zerop (aref text i))
-        return (substring text (1+ i))))
+  (cl-loop for i from 1 below (length text)
+           if (zerop (aref text i))
+           return (substring text (1+ i))))
 
 (defun esersa--padding-oaep-add (text size)
   (let* ((from (string-to-list text))
          (vhash (esersa--hex-to-bytes (sha1 "")))
          (sha1-len (length vhash))
          (max-len (- size 1 sha1-len sha1-len 1)))
-    (when (minusp max-len)
+    (when (cl-minusp max-len)
       (signal 'esersa-encryption-failed
               (list "Key size too small")))
     (when (> (length text) max-len)
@@ -478,14 +550,14 @@
           (db (make-list (- size sha1-len) 0)))
 
       ;; set db
-      (loop for b in vhash
-            for i from 0
-            do (esersa--listset db i b))
+      (cl-loop for b in vhash
+               for i from 0
+               do (esersa--listset db i b))
       (esersa--listcpy (last db (+ 1 (length from))) (cons 1 from))
       ;; set seed
-      (loop repeat sha1-len
-            for i from 0
-            do (esersa--listset seed i (random 256)))
+      (cl-loop repeat sha1-len
+               for i from 0
+               do (esersa--listset seed i (random 256)))
 
       ;; XOR masking
       (let* ((dbmask (esersa--oaep-MGF seed (length db)))
@@ -499,9 +571,9 @@
   ;; No need to concern about it in elisp.
   (let* ((from (string-to-list text))
          (taker (lambda (n l)
-                  (loop repeat n
-                        for x in l
-                        collect x)))
+                  (cl-loop repeat n
+                           for x in l
+                           collect x)))
          ;; to verify hash
          (vhash (esersa--hex-to-bytes (sha1 "")))
          (sha1-len (length vhash))
@@ -515,29 +587,29 @@
          (hash (funcall taker sha1-len db)))
     (unless (equal vhash hash)
       (signal 'esersa-decryption-failed (list "Hash is changed")))
-    (loop for xs on (nthcdr sha1-len db)
-          while (zerop (car xs))
-          finally return
-          (let ((data (cdr xs)))
-            (unless (= (car xs) 1)
-              (signal 'esersa-decryption-failed (list "No digit")))
-            (apply 'esersa--unibytes data)))))
+    (cl-loop for xs on (nthcdr sha1-len db)
+             while (zerop (car xs))
+             finally return
+             (let ((data (cdr xs)))
+               (unless (= (car xs) 1)
+                 (signal 'esersa-decryption-failed (list "No digit")))
+               (apply 'esersa--unibytes data)))))
 
 (defun esersa--oaep-MGF (seed require-len)
-  (loop for i from 0
-        while (< (length out) require-len)
-        append
-        (let* ((cnt (list
-                     (logand (lsh i -24) ?\xff)
-                     (logand (lsh i -16) ?\xff)
-                     (logand (lsh i  -8) ?\xff)
-                     (logand      i      ?\xff)))
-               (bytes (apply 'esersa--unibytes (append seed cnt))))
-          (esersa--hex-to-bytes (sha1 bytes)))
-        into out
-        finally return (loop repeat require-len
-                             for b in out
-                             collect b)))
+  (cl-loop for i from 0
+           while (< (length out) require-len)
+           append
+           (let* ((cnt (list
+                        (logand (lsh i -24) ?\xff)
+                        (logand (lsh i -16) ?\xff)
+                        (logand (lsh i  -8) ?\xff)
+                        (logand      i      ?\xff)))
+                  (bytes (apply 'esersa--unibytes (append seed cnt))))
+             (esersa--hex-to-bytes (sha1 bytes)))
+           into out
+           finally return (cl-loop repeat require-len
+                                   for b in out
+                                   collect b)))
 
 (defun esersa--padding-add (text size)
   (let ((func (intern-soft
@@ -568,12 +640,12 @@
 ;;;
 
 (defun esersa-key-size (key)
-  (loop with n = (esersa-key:N key)
-        until (esersa-bn:zerop n)
-        for i from 0
-        do (setq n (esersa-bn:rshift n 1))
-        finally return (+ (/ i 8)
-                          (if (zerop (% i 8)) 0 1))))
+  (cl-loop with n = (esersa-key:N key)
+           until (esersa-bn:zerop n)
+           for i from 0
+           do (setq n (esersa-bn:rshift n 1))
+           finally return (+ (/ i 8)
+                             (if (zerop (% i 8)) 0 1))))
 
 (defun esersa-generate-key (bits &optional comment)
   ;;TODO
@@ -649,21 +721,21 @@
        (esersa-bn:from-bytes (nth 3 blocks))))))
 
 (defun esersa--asn1-read-blocks (data)
-  (destructuring-bind (tag seqlen seq)
+  (cl-destructuring-bind (tag seqlen seq)
       (esersa--asn1-read-object data)
     ;;TODO check tag?
     ;; (unless (= tag ?\x30)
     ;;   (error "TODO"))
     (unless (= seqlen (length seq))
       (signal 'invalid-read-syntax (list "Unexpected bytes")))
-    (loop with list = seq
-          while list
-          collect (destructuring-bind (tag len rest)
-                      (esersa--asn1-read-object list)
-                    (loop repeat len
-                          for xs on rest
-                          collect (car xs)
-                          finally (setq list xs))))))
+    (cl-loop with list = seq
+             while list
+             collect (cl-destructuring-bind (tag len rest)
+                         (esersa--asn1-read-object list)
+                       (cl-loop repeat len
+                                for xs on rest
+                                collect (car xs)
+                                finally (setq list xs))))))
 
 ;; '(inf ret rest)
 (defun esersa--asn1-read-length (list)
@@ -671,16 +743,16 @@
     (cond
      ((= (car list) ?\x80)
       (list 1 (cdr list)))
-     ((plusp (logand (car list) ?\x80))
+     ((cl-plusp (logand (car list) ?\x80))
       (setq list (cdr list))
       (when (> i 3) (error "Too huge data %d" i))
-      (loop with ret = 0
-            for j downfrom i above 0
-            for xs on list
-            do (progn
-                 (setq ret (lsh ret 8))
-                 (setq ret (logior ret (car xs))))
-            finally return (list ret xs)))
+      (cl-loop with ret = 0
+               for j downfrom i above 0
+               for xs on list
+               do (progn
+                    (setq ret (lsh ret 8))
+                    (setq ret (logior ret (car xs))))
+               finally return (list ret xs)))
      (t
       (list i (cdr list))))))
 
@@ -692,20 +764,20 @@
      ((= i V_ASN1_PRIMITIVE_TAG)
       (error "TODO Not yet tested")
       (setq list (cdr list))
-      (loop with l = 0
-            for xs on list
-            do (progn
-                 (setq l (lsh l 7))
-                 (setq l (logand (car xs) ?\x7f)))
-            ;;todo
-            ;; if (l > (INT_MAX >> 7L)) goto err;
-            while (plusp (logand (car xs) ?\x80))
-            finally (setq tag l)))
+      (cl-loop with l = 0
+               for xs on list
+               do (progn
+                    (setq l (lsh l 7))
+                    (setq l (logand (car xs) ?\x7f)))
+               ;;todo
+               ;; if (l > (INT_MAX >> 7L)) goto err;
+               while (cl-plusp (logand (car xs) ?\x80))
+               finally (setq tag l)))
      (t
       (setq tag i)
       (setq list (cdr list))))
     ;;TODO tag is not used
-    (destructuring-bind (len rest) (esersa--asn1-read-length list)
+    (cl-destructuring-bind (len rest) (esersa--asn1-read-length list)
       (list tag len rest))))
 
 (defun esersa-openssh-load-pubkey (pub-file)
@@ -734,9 +806,9 @@
            ;; public key have recursive structure.
            (bit-string (nth 1 top-blocks))
            (blocks (esersa--asn1-read-blocks
-                    (loop for xs on bit-string
-                          unless (zerop (car xs))
-                          return xs))))
+                    (cl-loop for xs on bit-string
+                             unless (zerop (car xs))
+                             return xs))))
       ;; ASN1_SEQUENCE_cb(RSAPublicKey, rsa_cb) = {
       ;;        ASN1_SIMPLE(RSA, n, BIGNUM),
       ;;        ASN1_SIMPLE(RSA, e, BIGNUM),
@@ -762,7 +834,7 @@
          (comment (match-string 2 pub-line))
          (binary (append (base64-decode-string key) nil))
          (blocks (esersa--read-publine-blocks binary)))
-    (destructuring-bind (type e n) blocks
+    (cl-destructuring-bind (type e n) blocks
       (let (
             ;; ignore sign byte by `cdr'
             (N (esersa-bn:from-bytes (cdr n))) 
@@ -776,11 +848,11 @@
       (let* ((tmp (esersa-bn:read-int32 bytes))
              (len (esersa-bn:to-number (car tmp))))
         (setq bytes (cadr tmp))
-        (loop for bs on bytes
-              repeat len
-              collect (car bs) into res
-              finally (setq data res
-                            bytes bs))
+        (cl-loop for bs on bytes
+                 repeat len
+                 collect (car bs) into res
+                 finally (setq data res
+                               bytes bs))
         (setq res (cons data res))))
     (nreverse res)))
 
@@ -800,7 +872,7 @@
                (pass (vconcat (read-passwd prompt)))
                (iv-bytes (esersa--hex-to-bytes hex-iv))
                ;; required only 8 bytes to create key
-               (iv-8 (loop repeat 8 for b in iv-bytes collect b))
+               (iv-8 (cl-loop repeat 8 for b in iv-bytes collect b))
                (A (md5 (apply 'esersa--unibytes (append pass iv-8))))
                (B (md5 (apply
                         'esersa--unibytes
@@ -887,7 +959,7 @@
          (klen (esersa-bn:serialize (length key-type) 4))
          (serializer (lambda (x)
                        (let ((bs (esersa-bn:to-bytes x)))
-                         (if (plusp (logand (car bs) ?\x80))
+                         (if (cl-plusp (logand (car bs) ?\x80))
                              (cons 0 bs)
                            bs))))
          (E (esersa-key:E key))
@@ -914,8 +986,8 @@
 (defun esersa-openssh-pubkey-fingerprint (key)
   (let* ((rawpub (esersa--openssh-key-to-rawpub key))
          (hash (md5 rawpub))
-         (hexes (loop for i from 0 below (length hash) by 2
-                      collect (substring hash i (+ i 2)))))
+         (hexes (cl-loop for i from 0 below (length hash) by 2
+                         collect (substring hash i (+ i 2)))))
     (mapconcat (lambda (x) x) hexes ":")))
 
 ;;;
