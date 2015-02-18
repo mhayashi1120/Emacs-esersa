@@ -9,3 +9,6 @@ check: compile
 
 compile:
 	$(EMACS) -q -batch -f batch-byte-compile esersa.el
+
+clean:
+	@rm -f esersa.elc
