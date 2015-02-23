@@ -881,7 +881,14 @@
                         'esersa--unibytes
                         (append (esersa--hex-to-bytes B) pass iv-8)))))
           (setq iv (vconcat iv-bytes))
-          (setq key (vconcat (esersa--hex-to-bytes (concat A B))))
+          (unless (string-match "aes-\\(128\\|192\\|256\\)" algorithm)
+            (error "Not supported encrypt algorithm %s" algorithm))
+          (let ((key-length (string-to-number (match-string 1 algorithm)))
+                (key-bytes (esersa--hex-to-bytes (concat A B))))
+            (cl-loop repeat (/ key-length 8)
+                     for b in key-bytes
+                     collect b into res
+                     finally (setq key (vconcat res))))
           (unless (re-search-forward "^$" nil t)
             (signal 'invalid-read-syntax
                     (list "No private key header")))))
